@@ -460,7 +460,7 @@ RELEASE='0.1.0'
 
 
 def release():
-    # One archive for players: the loader and both plugins, taken from the two tested packages.
+    # Player archive: only the tesmioloader folder, with the binaries of the two tested packages.
     industry=ROOT/('dist/industrial-tycoon-'+VERSION)
     construction=ROOT/('dist/industrial-construction-'+CONSTRUCTION_VERSION)
     tested={}
@@ -481,23 +481,11 @@ def release():
     for plugin,source in (('industrial_tycoon',industry),('industrial_construction',construction)):
         shutil.copy2(source/'tesmioloader/build/plugins'/(plugin+'.dll'),loader/'plugins'/(plugin+'.dll'))
         shutil.copy2(ROOT/'config'/(plugin+'.ini'),loader/'plugins'/(plugin+'.ini'))
-    for name in ('README.md','guide.md'):
-        shutil.copy2(ROOT/name,dist/name)
-    shutil.copy2(ROOT/'vendor/TesmioLoader/LICENSE',dist/'COPYING.txt')
-    for name in ('native_test_results.txt','static_validation.json'):
-        shutil.copy2(industry/name,dist/name)
-    for name in ('construction_native_test_results.txt','construction_static_validation.json'):
-        shutil.copy2(construction/name,dist/name)
-    source=dist/'source'
-    for subdir in ('src','tests','config'):
-        shutil.copytree(ROOT/subdir,source/subdir)
-    for name in ('dev.py','requirements.txt','README.md','guide.md'):
-        shutil.copy2(ROOT/name,source/name)
-    shutil.copytree(ROOT/'vendor/TesmioLoader',source/'vendor/TesmioLoader',ignore=shutil.ignore_patterns('.git'))
+    # The GPL travels with the binaries; their source is this repository and upstream TesmioLoader.
+    shutil.copy2(ROOT/'vendor/TesmioLoader/LICENSE',dist/'tesmioloader/LICENSE.txt')
     hashes={str(p.relative_to(dist)).replace('\\','/'):hashlib.sha256(p.read_bytes()).hexdigest()
             for p in sorted(loader.rglob('*')) if p.suffix in {'.dll','.exe'}}
     assert hashes==tested,'Release binaries differ from the tested packages'
-    (dist/'SHA256.json').write_text(json.dumps(hashes,indent=2),encoding='utf-8')
     print('RELEASE '+shutil.make_archive(str(dist),'zip',dist))
 
 

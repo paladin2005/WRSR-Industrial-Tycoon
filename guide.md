@@ -133,6 +133,6 @@ Run each command separately:
 .\.venv\Scripts\python.exe dev.py release
 ```
 
-The tests execute native code on synthetic memory; they do not launch the game. The two plugin packages are written to `dist/`. `release` checks their hashes and combines them into the player archive `dist/wrsr-industrial-tycoon-v<release>.zip` (loader, launcher, both plugins and their INI files, licenses, test results and source); the release number is `RELEASE` in `dev.py`, separate from the plugin versions. Install its `tesmioloader` folder as described in the [README](README.md#install).
+The tests execute native code on synthetic memory; they do not launch the game. The two plugin packages are written to `dist/`. `release` checks their hashes and builds the player archive `dist/wrsr-industrial-tycoon-v<release>.zip`. It holds only the `tesmioloader` folder: the loader, the launcher, both plugins, their INI files and the GPL license. The release number is `RELEASE` in `dev.py`, separate from the plugin versions. The source for the release binaries is this repository at the release tag and TesmioLoader commit `3baa141`, unmodified, built with `dev.py loader`. Install its `tesmioloader` folder as described in the [README](README.md#install).
 
 The `install`, `update` and `construction-install` helpers currently use the maintainer's local game path in `dev.py`. For another machine, use the manual installation steps or adapt those paths first. Do not replace DLLs while the game is running.
