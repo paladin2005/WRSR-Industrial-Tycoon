@@ -1,0 +1,48 @@
+{
+  "sha256": "296644a9f207d609031fc2ae73fed2dcb34619a1d55a35d1c7b51965ce6841b8",
+  "timestamp": "0x6a3eb6ad",
+  "image_base": "0x140000000",
+  "runtime_functions": 14168,
+  "sections": [
+    {
+      "name": ".text",
+      "rva": "0x1000",
+      "size": 8825347
+    },
+    {
+      "name": ".rdata",
+      "rva": "0x86c000",
+      "size": 1203298
+    },
+    {
+      "name": ".data",
+      "rva": "0x992000",
+      "size": 804632
+    },
+    {
+      "name": ".pdata",
+      "rva": "0xa57000",
+      "size": 170016
+    },
+    {
+      "name": ".gfids",
+      "rva": "0xa81000",
+      "size": 64
+    },
+    {
+      "name": ".tls",
+      "rva": "0xa82000",
+      "size": 9
+    },
+    {
+      "name": ".rsrc",
+      "rva": "0xa83000",
+      "size": 99288
+    },
+    {
+      "name": ".reloc",
+      "rva": "0xa9c000",
+      "size": 1140
+    }
+  ]
+}

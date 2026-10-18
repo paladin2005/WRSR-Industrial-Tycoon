@@ -1,0 +1,30 @@
+# toolchain and environments (large, reproducible)
+.venv/
+tools/
+vendor/
+
+# build outputs
+build/
+dist/
+
+# private research: game code must never be committed
+research/*.exe
+research/*.asm
+research/field_*.txt
+
+# python
+__pycache__/
+*.pyc
+
+# editor / OS
+.vscode/
+Thumbs.db
+desktop.ini
+
+# local agent instructions, project notes and session helpers
+.agents/
+.codex/
+.claude/
+*.md
+!README.md
+!guide.md
