@@ -130,8 +130,9 @@ Run each command separately:
 .\.venv\Scripts\python.exe dev.py construction-test
 .\.venv\Scripts\python.exe dev.py package
 .\.venv\Scripts\python.exe dev.py construction-package
+.\.venv\Scripts\python.exe dev.py release
 ```
 
-The tests execute native code on synthetic memory; they do not launch the game. The two ZIP packages are written to `dist/`. Install their `tesmioloader` folders as described in the [README](README.md#installation).
+The tests execute native code on synthetic memory; they do not launch the game. The two plugin packages are written to `dist/`. `release` checks their hashes and combines them into the player archive `dist/wrsr-industrial-tycoon-v<release>.zip` (loader, launcher, both plugins and their INI files, licenses, test results and source); the release number is `RELEASE` in `dev.py`, separate from the plugin versions. Install its `tesmioloader` folder as described in the [README](README.md#install).
 
 The `install`, `update` and `construction-install` helpers currently use the maintainer's local game path in `dev.py`. For another machine, use the manual installation steps or adapt those paths first. Do not replace DLLs while the game is running.

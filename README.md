@@ -14,7 +14,7 @@ Buildings that normally need workers behave as if they were fully staffed, and c
 
 Everything else stays as in the base game. You still deliver every input and construction material, buy vehicles, supply power and fuel, and make room for the output. Nothing is built instantly and no resources appear for free.
 
-The mod is two independent plugins for [TesmioLoader](https://github.com/MaxLegend/TesmioLoader):
+The mod is two independent plugins for [TesmioLoader](https://github.com/MaxLegend/TesmioLoader), shipped together in one package. Either can be turned off in the launcher:
 
 | Plugin | What it does |
 |---|---|
@@ -61,10 +61,10 @@ It should work with most mods. Buildings are recognized by their type, not by th
 
 ### Steps
 
-1. Download the two packages from the [releases page](https://github.com/paladin2005/WRSR-Industrial-Tycoon/releases): **Industrial Tycoon** and **Industrial Tycoon construction**. The "Source code" ZIP is not an installer.
+1. Download the `wrsr-industrial-tycoon` ZIP from the latest release on the [releases page](https://github.com/paladin2005/WRSR-Industrial-Tycoon/releases). The "Source code" ZIP is not an installer.
 2. Close the game.
 3. Open your game folder, the one that contains `SOVIET64.exe`.
-4. Extract both packages and copy their `tesmioloader` folders into the game folder, merging them.
+4. Extract the package and copy its `tesmioloader` folder into the game folder.
 5. Run `tesmioloader\build\tesmiolauncher.exe` with Steam open. If it does not find your game, click **Browse** and select your `SOVIET64.exe`.
 6. Check that it detects version **1.1.1.9**, tick both **Industrial Tycoon** plugins, and launch.
 

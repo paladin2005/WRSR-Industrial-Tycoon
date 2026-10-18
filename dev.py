@@ -456,6 +456,51 @@ def package():
     print('PACKAGE '+archive)
 
 
+RELEASE='0.1.0'
+
+
+def release():
+    # One archive for players: the loader and both plugins, taken from the two tested packages.
+    industry=ROOT/('dist/industrial-tycoon-'+VERSION)
+    construction=ROOT/('dist/industrial-construction-'+CONSTRUCTION_VERSION)
+    tested={}
+    for source in (industry,construction):
+        for relative,digest in json.loads((source/'SHA256.json').read_text(encoding='utf-8')).items():
+            relative=relative.replace('\\','/')
+            assert hashlib.sha256((source/relative).read_bytes()).hexdigest()==digest,'Package hash mismatch: '+relative
+            if relative.startswith('tesmioloader/'):
+                tested[relative]=digest
+    dist=ROOT/('dist/wrsr-industrial-tycoon-v'+RELEASE)
+    if dist.exists():
+        shutil.rmtree(dist)
+    loader=dist/'tesmioloader/build'
+    (loader/'plugins').mkdir(parents=True)
+    for name in ('tesmioloader.dll','tesmiolauncher.exe'):
+        shutil.copy2(industry/'tesmioloader/build'/name,loader/name)
+    shutil.copy2(ROOT/'config/tesmioloader.ini',loader/'tesmioloader.ini')
+    for plugin,source in (('industrial_tycoon',industry),('industrial_construction',construction)):
+        shutil.copy2(source/'tesmioloader/build/plugins'/(plugin+'.dll'),loader/'plugins'/(plugin+'.dll'))
+        shutil.copy2(ROOT/'config'/(plugin+'.ini'),loader/'plugins'/(plugin+'.ini'))
+    for name in ('README.md','guide.md'):
+        shutil.copy2(ROOT/name,dist/name)
+    shutil.copy2(ROOT/'vendor/TesmioLoader/LICENSE',dist/'COPYING.txt')
+    for name in ('native_test_results.txt','static_validation.json'):
+        shutil.copy2(industry/name,dist/name)
+    for name in ('construction_native_test_results.txt','construction_static_validation.json'):
+        shutil.copy2(construction/name,dist/name)
+    source=dist/'source'
+    for subdir in ('src','tests','config'):
+        shutil.copytree(ROOT/subdir,source/subdir)
+    for name in ('dev.py','requirements.txt','README.md','guide.md'):
+        shutil.copy2(ROOT/name,source/name)
+    shutil.copytree(ROOT/'vendor/TesmioLoader',source/'vendor/TesmioLoader',ignore=shutil.ignore_patterns('.git'))
+    hashes={str(p.relative_to(dist)).replace('\\','/'):hashlib.sha256(p.read_bytes()).hexdigest()
+            for p in sorted(loader.rglob('*')) if p.suffix in {'.dll','.exe'}}
+    assert hashes==tested,'Release binaries differ from the tested packages'
+    (dist/'SHA256.json').write_text(json.dumps(hashes,indent=2),encoding='utf-8')
+    print('RELEASE '+shutil.make_archive(str(dist),'zip',dist))
+
+
 def install():
     game=Path(r'F:\SteamLibrary\steamapps\common\SovietRepublic')
     assert hashlib.sha256((game/'SOVIET64.exe').read_bytes()).hexdigest()==EXPECTED_SHA,'Game build changed'
@@ -515,10 +560,10 @@ def update():
 
 def main():
     parser=argparse.ArgumentParser()
-    parser.add_argument('action',choices=['verify','build','test','loader','probe','package','install','update',
+    parser.add_argument('action',choices=['verify','build','test','loader','probe','package','release','install','update',
         'construction-build','construction-test','construction-package','construction-install'])
     args=parser.parse_args()
-    {'verify':verify,'build':build,'test':test,'loader':loader,'probe':probe,'package':package,'install':install,'update':update,
+    {'verify':verify,'build':build,'test':test,'loader':loader,'probe':probe,'package':package,'release':release,'install':install,'update':update,
      'construction-build':construction_build,'construction-test':construction_test,
      'construction-package':construction_package,'construction-install':construction_install}[args.action]()
 
