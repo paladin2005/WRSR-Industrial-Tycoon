@@ -6,7 +6,7 @@ A mod for **Workers & Resources: Soviet Republic** that lets you play it like Tr
 
 **Experimental · Windows x64 · WRSR 1.1.1.9 only**
 
-[What it does](#what-it-does) · [Install](#install) · [Recommended game settings](#recommended-game-settings) · [How to play](#how-to-play) · [Plugin settings](#plugin-settings) · [Troubleshooting](#troubleshooting) · [Technical guide](guide.md)
+[What it does](#what-it-does) · [Install](#install) · [Recommended game settings](#recommended-game-settings) · [How to play](#how-to-play) · [Plugin settings](#plugin-settings) · [Technical guide](guide.md)
 
 ## What it does
 
@@ -47,13 +47,9 @@ Storages and farms, the whole electrical network, construction and demolition of
 
 Train passenger stations and passenger harbors can be built; the other passenger stations stay excluded.
 
-### Status
+### Mods
 
-The mod is experimental. Test it on a separate save.
-
-| Confirmed in game | Implemented, still being tested |
-|---|---|
-| Oil refinery, woodcutting post, car factory and power plants without staff. Storage, farm and electrical network construction, steam pipes and traction transformers. Rail buildings and track built by a rail construction office without staff. Fire trucks without firefighters. Construction offices loading at concrete and asphalt plants. Construction stopping when materials run out and resuming after save and load. | Everything else above. In particular: the industry sections, ships, cargo, conveyors, decorations, repair stations, airports, customs, waste and water management, and building renovation. |
+It should work with most mods. Buildings are recognized by their type, not by their name, so Workshop buildings of a covered type (factories, mines, storages, power plants and so on) work without workers too. The exception is other TesmioLoader plugins that change the same game code, which may conflict.
 
 ## Install
 
@@ -169,26 +165,6 @@ The settings are the two `.ini` files in `tesmioloader\build\plugins\`. Edit the
 | `virtual_track_crew` | `20` | Crew a rail vehicle uses when its own value is unusable (1 to 200). |
 
 Industries, mines and power plants have no switch; they are always on while the plugin is enabled.
-
-## Troubleshooting
-
-The log is `tesmioloader\build\tesmioloader.log`.
-
-- **At startup** it should show `validated WRSR 1.1.1.9` and `INSTALLED` for both plugins.
-- **`refused`** means the game version or code is different and nothing was patched.
-- **`skipped`** means only that module stayed off.
-- **While playing**, it prints counters every few seconds.
-- **`diagnostic: zero-worker building site not admitted: building type N`** names a site that is waiting for workers and is not covered. Citizen buildings show up there too, which is expected.
-
-| Problem | What to check |
-|---|---|
-| The plugins do not load | Game version 1.1.1.9, both plugins ticked, game started from the launcher. |
-| An industry produces nothing | Inputs, power, free output space, and whether the building is covered. |
-| A site does not advance | Assigned office, delivered materials, phase machinery, worker maximum above 0. |
-| A crossing cannot be assigned | A forklift station linking its network to the road. |
-| A fire truck does not leave | `fire_service=1`, a free truck with fuel, and road access. |
-
-[Report a problem or share test results](https://github.com/paladin2005/WRSR-Industrial-Tycoon/issues). Include your game and plugin versions, the exact building names, the relevant log lines and a screenshot.
 
 ## Credits and license
 
