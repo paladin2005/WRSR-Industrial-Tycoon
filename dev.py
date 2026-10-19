@@ -152,7 +152,7 @@ def build():
     run(common+[ROOT/'tests/work_test.cpp',ROOT/'tests/work_call.S','-o',BUILD/'work_test.exe'])
     run(common+[ROOT/'tests/repair_test.cpp',ROOT/'tests/repair_call.S','-o',BUILD/'repair_test.exe'])
     run(common+['-shared',ROOT/'src/industrial_tycoon.cpp','-o',BUILD/'industrial_tycoon.dll'])
-    run(common+[ROOT/'tests/plugin_host.cpp',ROOT/'tests/stub_call.S',ROOT/'tests/construction_call.S',ROOT/'tests/fire_call.S',ROOT/'tests/rail_call.S',ROOT/'tests/work_call.S',ROOT/'tests/repair_call.S','-o',BUILD/'plugin_host.exe'])
+    run(common+[ROOT/'tests/plugin_host.cpp',ROOT/'tests/stub_call.S',ROOT/'tests/construction_call.S',ROOT/'tests/fire_call.S',ROOT/'tests/rail_call.S',ROOT/'tests/work_call.S',ROOT/'tests/repair_call.S',ROOT/'tests/asphalt_call.S',ROOT/'tests/terraform_call.S','-o',BUILD/'plugin_host.exe'])
     print('PASS prototype and native test compiled')
 
 
@@ -313,6 +313,51 @@ def construction_verify():
     for ins in md.disasm(image[0x14EB10:0x14F15A],0x14EB10):
         if ins.mnemonic.startswith('j') and ins.operands[0].type==capstone.x86.X86_OP_IMM:
             assert not 0x14EC50<ins.operands[0].imm<0x14EC56,'Branch enters asphalt planner patch'
+    # Terraforming (0.20): the terrain work planner 0x3A6FD0 copies the selected points to [game+0xD2D8], selects free
+    # vehicles with the skill (3 excavator, 0x17 bulldozer) into [game+0xD2F0] and, only when it selected none, counts
+    # unemployed citizens into [game+0xD338] and adds count/3 to the power [game+0xD374]. Its four callers show
+    # "You need a free excavator/bulldozer ... (or unemployed citizens ...)" (strings 1169/1171 and 25175) and skip
+    # the work when no vehicle was selected and the count is 0. The patch replaces mov eax,0x55555556 at 0x3A77E3,
+    # where the citizen loop and its empty-building-list branch (0x3A7621) meet.
+    assert image[0x3A6FD0:0x3A6FE7]==bytes.fromhex('48 8b c4 44 89 40 18 48 89 50 10 55 53 56 57 41 54 41 55 41 56 41 57'),'Terrain planner entry changed'
+    assert image[0x3A7054:0x3A705B]==bytes.fromhex('48 8d 8e d8 d2 00 00'),'Terrain point copy changed'
+    assert image[0x3A75E8:0x3A7627]==bytes.fromhex(
+        'c7 86 38 d3 00 00 00 00 00 00 48 8b 86 f8 d2 00 00 48 2b 86 f0 d2 00 00 48 83 f8 08 0f 83 02 02 00 00 33 ff'
+        ' 48 8b 86 10 1b 01 00 48 2b 86 08 1b 01 00 48 c1 f8 03 48 85 c0 0f 84 bc 01 00 00'),'Terrain citizen search entry changed'
+    assert image[0x3A77B3:0x3A780C]==bytes.fromhex(
+        '48 63 86 38 d3 00 00 48 3b c2 77 1f ff c7 48 8b 86 10 1b 01 00 48 2b 86 08 1b 01 00 48 c1 f8 03 8b cf 48 3b c8'
+        ' 0f 82 62 fe ff ff 4c 8b 74 24 38 b8 56 55 55 55 f7 ae 38 d3 00 00 8b c2 c1 e8 1f 03 d0 66 0f 6e c2 0f 5b c0'
+        ' f3 0f 58 86 74 d3 00 00 f3 0f 11 86 74 d3 00 00'),'Terrain citizen power step changed'
+    assert image[0x3A780C:0x3A784A]==bytes.fromhex(
+        '4d 85 ed 74 1a 48 8b 55 67 49 2b d5 48 c1 fa 02 41 b8 04 00 00 00 49 8b cd e8 26 a2 c5 ff 90 4d 85 f6 74 1a'
+        ' 48 8b 54 24 30 49 2b d6 48 c1 fa 03 41 b8 08 00 00 00 49 8b ce e8 06 a2 c5 ff'),'Terrain planner tail changed'
+    # RCX is written before any read in each block after the patch (RAX, RDX and flags are rewritten at once).
+    tail=list(md.disasm(image[0x3A77E8:0x3A7871],0x3A77E8))
+    assert tail[-1].mnemonic=='ret' and tail[-1].address==0x3A7870,'Terrain planner epilogue changed'
+    rcxKnown=False
+    for ins in tail:
+        if ins.address in (0x3A782B,0x3A784A): rcxKnown=False
+        read,written=ins.regs_access()
+        names={ins.reg_name(r) for r in read},{ins.reg_name(r) for r in written}
+        assert rcxKnown or not names[0]&{'rcx','ecx','cx','cl'},'RCX read after the terrain patch at %#x'%ins.address
+        rcxKnown|=bool(names[1]&{'rcx','ecx'})
+    for begin,end in ((0x3A6FD0,0x3A7871),):
+        for ins in md.disasm(image[begin:end],begin):
+            if ins.mnemonic.startswith('j') and ins.operands[0].type==capstone.x86.X86_OP_IMM:
+                assert not 0x3A77E3<ins.operands[0].imm<0x3A77E8,'Branch enters terrain planner patch'
+    assert image[0x2CB5C3:0x2CB5F6]==bytes.fromhex(
+        'e8 08 ba 0d 00 f3 45 0f 10 85 74 d3 00 00 49 8d 9d f0 d2 00 00 48 8b cb e8 00 a3 d4 ff 48 85 c0 0f 85 b0 00 00 00'
+        ' 41 39 85 38 d3 00 00 0f 85 a3 00 00 00'),'Terrain brush planner call changed'
+    assert image[0x2CB620:0x2CB625]+image[0x2CB635:0x2CB63A]==bytes.fromhex('ba 57 62 00 00 ba 91 04 00 00'),'Terrain brush warning changed'
+    assert image[0x3AA7AF:0x3AA823]==bytes.fromhex(
+        '83 ff 01 77 1b 44 8b cb 44 8d 40 d1 48 8d 55 b0 49 8b cd e8 09 c8 ff ff 4c 8b 75 b8 4c 8b 65 b0 8d 47 fe 83 f8 02'
+        ' 77 1d 44 8b cb 41 b8 17 00 00 00 48 8d 55 b0 49 8b cd e8 e4 c7 ff ff 4c 8b 75 b8 4c 8b 65 b0 f3 41 0f 10 bd 74 d3'
+        ' 00 00 49 8b 85 f8 d2 00 00 49 2b 85 f0 d2 00 00 48 83 f8 08 0f 83 1f 01 00 00 41 83 bd 38 d3 00 00 00 0f 85 11 01 00 00'),'Terrain tool planner calls changed'
+    assert image[0x3AA863:0x3AA868]+image[0x3AA878:0x3AA87D]+image[0x3AA8C0:0x3AA8C5]==bytes.fromhex('ba 57 62 00 00 ba 91 04 00 00 ba 93 04 00 00'),'Terrain tool warnings changed'
+    assert image[0x516F54:0x516F91]==bytes.fromhex(
+        'e8 77 00 e9 ff f3 44 0f 10 15 22 b3 4c 00 f3 45 0f 5e d4 f3 44 0f 59 15 bc 2e 3f 00 48 8d 0d 89 b2 4c 00'
+        ' e8 64 e9 af ff 48 85 c0 0f 85 b4 00 00 00 39 05 bd b2 4c 00 0f 85 a8 00 00 00'),'Second terrain brush planner call changed'
+    assert image[0x516FBB:0x516FC0]+image[0x516FD0:0x516FD5]==bytes.fromhex('ba 57 62 00 00 ba 91 04 00 00'),'Second terrain brush warning changed'
     (BUILD/'construction_static_validation.json').write_text(json.dumps({
         'sha256':EXPECTED_SHA,'patch_rva':'0x15a39d','stolen':['movd xmm6, esi','cvtdq2ps xmm6, xmm6'],
         'scope':['storage type5 6203','storage type5 6202','small farm type9 6115',
@@ -329,7 +374,8 @@ def construction_verify():
                  'farms type9','fields type8',                 'mines type7, production lines type40, scrapyards type109, factories type6 any name (waste chain since 0.17)',
                  'airports type46/47/48, road type 13','customs type20, foreign pipeline type107',
                  'technical services type49, trash containers type105','water and sewage type90/91/92/93/94/95/97/98, road types 11/16','renovation of admitted buildings in maintenance mode (XMM15 progress)',
-                 'asphalt delivery planning 0x14EC50 for admitted road types with virtual workers (no paver, no real workers)'],'gameplay_validation':False},indent=2),encoding='utf-8')
+                 'asphalt delivery planning 0x14EC50 for admitted road types with virtual workers (no paver, no real workers)',
+                 'terraforming 0x3A77E3: virtual workers counted like unemployed citizens when no excavator or bulldozer is selected'],'gameplay_validation':False},indent=2),encoding='utf-8')
     print('PASS construction executable context, complete instructions and branch boundaries')
 
 
@@ -342,7 +388,8 @@ def construction_build():
     run(common+[ROOT/'tests/construction_test.cpp',ROOT/'tests/construction_call.S','-o',BUILD/'construction_test.exe'])
     run(common+[ROOT/'tests/rail_test.cpp',ROOT/'tests/rail_call.S','-o',BUILD/'rail_test.exe'])
     run(common+[ROOT/'tests/asphalt_test.cpp',ROOT/'tests/asphalt_call.S','-o',BUILD/'asphalt_test.exe'])
-    run(common+[ROOT/'tests/plugin_host.cpp',ROOT/'tests/stub_call.S',ROOT/'tests/construction_call.S',ROOT/'tests/fire_call.S',ROOT/'tests/rail_call.S',ROOT/'tests/work_call.S',ROOT/'tests/repair_call.S',ROOT/'tests/asphalt_call.S','-o',BUILD/'construction_host.exe'])
+    run(common+[ROOT/'tests/terraform_test.cpp',ROOT/'tests/terraform_call.S','-o',BUILD/'terraform_test.exe'])
+    run(common+[ROOT/'tests/plugin_host.cpp',ROOT/'tests/stub_call.S',ROOT/'tests/construction_call.S',ROOT/'tests/fire_call.S',ROOT/'tests/rail_call.S',ROOT/'tests/work_call.S',ROOT/'tests/repair_call.S',ROOT/'tests/asphalt_call.S',ROOT/'tests/terraform_call.S','-o',BUILD/'construction_host.exe'])
 
 
 def construction_test():
@@ -350,10 +397,11 @@ def construction_test():
     output=run([BUILD/'construction_test.exe'])
     output+=run([BUILD/'rail_test.exe'])
     output+=run([BUILD/'asphalt_test.exe'])
+    output+=run([BUILD/'terraform_test.exe'])
     for mode in ('wrong-version','wrong-architecture','different-code','disabled','late-conflict','allocation-fails','invalid-workers',
                  'valid','valid-farm','valid-substation','valid-powerline','valid-office','valid-steam','valid-trafo','valid-road','valid-depot','valid-firestation','valid-ship',
                  'valid-rail-office','valid-track','rail-different-code','rail-disabled','valid-cargo','valid-monument','valid-field','valid-quarry',
-                 'valid-asphalt','asphalt-different-code','coexist'):
+                 'valid-asphalt','asphalt-different-code','valid-terraform','terraform-different-code','terraform-disabled','coexist'):
         output+=run([BUILD/'construction_host.exe','construction-'+mode])
     # The same host still executes the industry targets, including power plants.
     for mode in ('valid','valid-wood','valid-car','valid-power','valid-ship','valid-train-factory','valid-food-factory','valid-gravel-quarry','valid-workshop-mine'):
@@ -371,8 +419,8 @@ def construction_test():
     print('PASS construction DLL x64, plugin API and runtime dependencies')
 
 
-CONSTRUCTION_VERSION='0.19.0-experimental'
-PREVIOUS_CONSTRUCTION=('0.18.0-experimental','0.17.0-experimental','0.16.0-experimental','0.15.0-experimental','0.14.0-experimental','0.13.0-experimental','0.12.0-experimental','0.11.0-experimental','0.10.0-experimental','0.9.0-experimental','0.8.0-experimental','0.7.0-experimental','0.6.0-experimental','0.5.0-experimental','0.4.0-experimental','0.3.0-experimental','0.2.0-experimental','0.1.0-experimental')
+CONSTRUCTION_VERSION='0.20.0-experimental'
+PREVIOUS_CONSTRUCTION=('0.19.0-experimental','0.18.0-experimental','0.17.0-experimental','0.16.0-experimental','0.15.0-experimental','0.14.0-experimental','0.13.0-experimental','0.12.0-experimental','0.11.0-experimental','0.10.0-experimental','0.9.0-experimental','0.8.0-experimental','0.7.0-experimental','0.6.0-experimental','0.5.0-experimental','0.4.0-experimental','0.3.0-experimental','0.2.0-experimental','0.1.0-experimental')
 
 
 def construction_package():

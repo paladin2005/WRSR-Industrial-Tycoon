@@ -15,6 +15,7 @@
 #include "../src/repair_stub.h"
 #include "../src/plant_sources.h"
 #include "../src/asphalt_stub.h"
+#include "../src/terraform_stub.h"
 
 extern "C" void RunLaborStub(void*,void*,void*,std::uint64_t*);
 extern "C" void RunConstructionStub(void*,void*,void*,std::uint64_t*);
@@ -24,9 +25,10 @@ extern "C" void RunWorkStub(void*,void*,void*,std::uint64_t*);
 extern "C" void RunWorkStub2(void*,void*,void*,std::uint64_t*);
 extern "C" void RunRepairStub(void*,void*,void*,std::uint64_t*);
 extern "C" void RunAsphaltStub(void*,void*,void*,std::uint64_t*);
+extern "C" void RunTerraformStub(void*,void*,std::uint64_t*);
 static BYTE* image;
-static constexpr size_t imageSize=0x280000; // reaches the fire dispatch site 0x25373E
-static bool enabled=true,allocationFails=false,invalidWorkers=false,fireDisabled=false,railDisabled=false,repairDisabled=false,plantsDisabled=false;
+static constexpr size_t imageSize=0x3B0000; // reaches the terrain planner site 0x3A77E3
+static bool enabled=true,allocationFails=false,invalidWorkers=false,fireDisabled=false,railDisabled=false,repairDisabled=false,plantsDisabled=false,terraformDisabled=false;
 static const char* workDisabledKey="";
 static unsigned allocations=0;
 static void Log(const char* fmt,...) {
@@ -50,6 +52,8 @@ static int Config(const char*,const char*,const char* key,int fallback) {
     if (!std::strcmp(key,"rail_construction")) return railDisabled?0:1;
     for (const auto& s:industrial::work::kSites) if (!std::strcmp(key,s.key)) return std::strcmp(key,workDisabledKey)?1:0;
     if (!std::strcmp(key,"virtual_track_crew")) return fallback;
+    if (!std::strcmp(key,"terraforming")) return terraformDisabled?0:1;
+    if (!std::strcmp(key,"virtual_terraform_workers")) return fallback;
     return enabled?1:0;
 }
 
@@ -96,6 +100,10 @@ int main(int argc,char** argv) {
     namespace as=industrial::asphalt;
     std::memcpy(image+as::kContextAt,as::kContext,sizeof(as::kContext));
     if (!std::strcmp(mode,"asphalt-different-code")) image[as::kContextAt+20]^=1;
+    namespace tf=industrial::terraform;
+    std::memcpy(image+tf::kContextAt,tf::kContext,sizeof(tf::kContext));
+    if (!std::strcmp(mode,"terraform-different-code")) image[tf::kContextAt+3]^=1;
+    terraformDisabled=!std::strcmp(mode,"terraform-disabled");
     namespace ws=industrial::work;
     // Work sites: modes "<prefix>-different-code" and "<prefix>-disabled", prefix container or field.
     const char* workPrefix[ws::kSiteCount]={"container","field","tower","well"};
@@ -214,6 +222,34 @@ int main(int argc,char** argv) {
                                         !std::memcmp(image+as::kSite,as::kOriginal,sizeof(as::kOriginal));
         printf("%s asphalt delivery %s (%s)\n",asphaltOk?"PASS":"FAIL",asphaltExpected?"installed":"left original",mode);
         if (!asphaltOk) return 16;
+        bool terraformExpected=std::strcmp(mode,"terraform-different-code") && !terraformDisabled;
+        bool terraformOk=terraformExpected? image[tf::kSite]==0xE9 :
+                                            !std::memcmp(image+tf::kSite,tf::kOriginal,sizeof(tf::kOriginal));
+        printf("%s terraforming %s (%s)\n",terraformOk?"PASS":"FAIL",terraformExpected?"installed":"left original",mode);
+        if (!terraformOk) return 17;
+    }
+    if (construction && !std::strcmp(mode,"valid-terraform")) {
+        // Run the installed planner hook from the game site; the continuation returns here.
+        image[tf::kContinuation]=0xC3;
+        FlushInstructionCache(GetCurrentProcess(),image,imageSize);
+        std::vector<BYTE> points(12*500);
+        void* fleet[2]{};
+        auto runPlan=[&](int pointCount,int vehicles,int citizens) {
+            std::vector<BYTE> game(0xE000);
+            auto ptr=[&](size_t at,const void* p) { std::memcpy(game.data()+at,&p,8); };
+            ptr(0xD2D8,points.data()); ptr(0xD2E0,points.data()+12*pointCount);
+            ptr(0xD2F0,fleet); ptr(0xD2F8,fleet+vehicles);
+            std::memcpy(game.data()+0xD338,&citizens,4);
+            std::uint64_t o[16]{};
+            RunTerraformStub(image+tf::kSite,game.data(),o);
+            int count; std::memcpy(&count,game.data()+0xD338,4);
+            return o[11]==0 && static_cast<std::uint32_t>(o[0])==0x55555556u?count:-1;
+        };
+        int area=runPlan(500,0,0), small=runPlan(30,0,0), vehicle=runPlan(500,1,0), citizens=runPlan(500,0,150);
+        bool ok=area==100 && small==30 && vehicle==0 && citizens==150;
+        printf("%s actual construction DLL terraforming hook (valid-terraform); area=%d small=%d vehicle=%d citizens=%d\n",
+               ok?"PASS":"FAIL",area,small,vehicle,citizens);
+        return ok?0:1;
     }
     if (construction && !std::strcmp(mode,"valid-asphalt")) {
         // Run the installed planner hook from the game site; both continuations return here.

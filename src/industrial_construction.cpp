@@ -3,25 +3,29 @@
 #include "construction_stub.h"
 #include "rail_stub.h"
 #include "asphalt_stub.h"
+#include "terraform_stub.h"
 
 // The single version string: plugin info and the startup log both use it.
-#define CONSTRUCTION_VERSION "0.19.0"
+#define CONSTRUCTION_VERSION "0.20.0"
 
 namespace ic=industrial::construction;
 alignas(8) static volatile LONG64 g_counts[ic::kCounterSlots]{};
 alignas(8) static volatile LONG64 g_diag[ic::kDiagTableSlots]{};
 alignas(8) static volatile LONG64 g_trackTicks=0;
 alignas(8) static volatile LONG64 g_asphaltPlans=0;
+alignas(8) static volatile LONG64 g_terraformTicks=0;
 static volatile LONG g_stopping=0;
 static int g_workers=50;
 static bool g_renovation=true;
 static bool g_railWanted=true, g_railValid=false, g_railInstalled=false;
 static int g_trackCrew=20;
 static bool g_asphaltValid=false, g_asphaltInstalled=false;
+static bool g_terraformWanted=true, g_terraformValid=false, g_terraformInstalled=false;
+static int g_terraformWorkers=100;
 
 static DWORD WINAPI ReportActivity(void*) {
     LONG64 reported[ic::kCounterSlots]{};
-    LONG64 reportedTrack=0, reportedAsphalt=0;
+    LONG64 reportedTrack=0, reportedAsphalt=0, reportedTerraform=0;
     bool diagnosed[ic::kDiagTableSlots]{};
     while (!InterlockedCompareExchange(&g_stopping,0,0)) {
         Sleep(5000);
@@ -48,6 +52,11 @@ static DWORD WINAPI ReportActivity(void*) {
         if (asphalt!=reportedAsphalt) {
             Logf("industrial_construction asphalt: deliveries planned for virtual workers=%lld",asphalt);
             reportedAsphalt=asphalt;
+        }
+        LONG64 terraform=InterlockedCompareExchange64(&g_terraformTicks,0,0);
+        if (terraform!=reportedTerraform) {
+            Logf("industrial_construction terraforming: tool updates with virtual workers=%lld",terraform);
+            reportedTerraform=terraform;
         }
         // Each rejected (road type, sublevel) pair is reported once, to identify stalled sites.
         for (int i=0;i<ic::kDiagSlots;++i) {
@@ -151,6 +160,41 @@ static void InstallAsphaltDelivery() {
          static_cast<unsigned>(stub.size),static_cast<unsigned>(a::kCapacity));
 }
 
+static bool TerraformContextMatches() {
+    namespace t=industrial::terraform;
+    return g_exeSize>t::kContextAt+sizeof(t::kContext) &&
+        !std::memcmp(g_exeBase+t::kContextAt,t::kContext,sizeof(t::kContext));
+}
+
+// Optional module: a failure here leaves the terrain planner original.
+static void InstallTerraforming() {
+    namespace t=industrial::terraform;
+    if (!g_terraformWanted) { Logf("industrial_construction terraforming disabled in INI"); return; }
+    if (!g_terraformValid || !TerraformContextMatches()) {
+        Logf("industrial_construction terraforming skipped: terrain planner instructions differ"); return;
+    }
+    BYTE* site=g_exeBase+t::kSite;
+    BYTE* cave=AllocNear(site,t::kCapacity);
+    if (!cave) { Logf("industrial_construction terraforming skipped: no nearby code memory"); return; }
+    t::Stub stub;
+    BYTE patch[sizeof(t::kOriginal)]{};
+    if (!t::BuildStub(stub,reinterpret_cast<std::uintptr_t>(cave),reinterpret_cast<std::uintptr_t>(g_exeBase+t::kContinuation),
+            reinterpret_cast<std::uintptr_t>(&g_terraformTicks),g_terraformWorkers) ||
+        !industrial::RelativeJump(patch,reinterpret_cast<std::uintptr_t>(site),reinterpret_cast<std::uintptr_t>(cave))) {
+        VirtualFree(cave,0,MEM_RELEASE);
+        Logf("industrial_construction terraforming skipped: stub does not fit or jump is out of range"); return;
+    }
+    std::memcpy(cave,stub.bytes,stub.size);
+    FlushInstructionCache(GetCurrentProcess(),cave,stub.size);
+    if (!WriteCode(site,patch,sizeof(patch))) {
+        VirtualFree(cave,0,MEM_RELEASE);
+        Logf("industrial_construction terraforming skipped: unable to write planner patch"); return;
+    }
+    g_terraformInstalled=true;
+    Logf("industrial_construction terraforming INSTALLED: terrain tools work by hand with up to %d virtual workers when no excavator, bulldozer or unemployed citizen is available (stub %u/%u bytes)",
+         g_terraformWorkers,static_cast<unsigned>(stub.size),static_cast<unsigned>(t::kCapacity));
+}
+
 extern "C" __declspec(dllexport) unsigned TsmPluginApiVersion() { return TSM_API_VERSION; }
 extern "C" __declspec(dllexport) int TsmPluginInit(const TsmHost* host,TsmPluginInfo* info) {
     TsmBind(host);
@@ -163,6 +207,9 @@ extern "C" __declspec(dllexport) int TsmPluginInit(const TsmHost* host,TsmPlugin
     g_railWanted=H->configInt("plugins\\industrial_construction.ini","industrial_construction","rail_construction",1)!=0;
     g_trackCrew=H->configInt("plugins\\industrial_construction.ini","industrial_construction","virtual_track_crew",20);
     if (g_trackCrew<1 || g_trackCrew>200) g_trackCrew=20;
+    g_terraformWanted=H->configInt("plugins\\industrial_construction.ini","industrial_construction","terraforming",1)!=0;
+    g_terraformWorkers=H->configInt("plugins\\industrial_construction.ini","industrial_construction","virtual_terraform_workers",100);
+    if (g_terraformWorkers<1 || g_terraformWorkers>1000) g_terraformWorkers=100;
     auto dos=reinterpret_cast<const IMAGE_DOS_HEADER*>(g_exeBase);
     if (dos->e_magic!=IMAGE_DOS_SIGNATURE || dos->e_lfanew<0 || dos->e_lfanew>0x800) return 1;
     auto nt=reinterpret_cast<const IMAGE_NT_HEADERS64*>(g_exeBase+dos->e_lfanew);
@@ -177,6 +224,7 @@ extern "C" __declspec(dllexport) int TsmPluginInit(const TsmHost* host,TsmPlugin
     }
     g_railValid=RailContextMatches();
     g_asphaltValid=AsphaltContextMatches();
+    g_terraformValid=TerraformContextMatches();
     Logf("industrial_construction validated WRSR 1.1.1.9; storages(type5, any name) + farms(type9)"
          " + electric buildings(type17/18/19/31/32/35/60) + power lines(road type 8/9) + pipes(road type 7, oil and steam)"
          " + construction/demolition offices(type12/106) + roads(road type 0/3/4) + road buildings(type0/14/34/38, repair stations 108) + fire stations(type26)"
@@ -185,9 +233,9 @@ extern "C" __declspec(dllexport) int TsmPluginInit(const TsmHost* host,TsmPlugin
          " + decorations(monuments type33, accessories type80 but pedestrian/metro, fences road type 15)"
          " + industries(fields type8, factories type6, mines type7, production lines type40, scrapyards type109, any name)"
          " + airports(type46/47/48, road type 13) + border(customs type20, foreign pipeline type107)"
-         " + waste(technical services type49, trash containers type105) + water(type90/91/92/93/94/95/97/98, road type 11/16); virtual workers <=%d; renovation %s; rail construction %s; asphalt delivery %s",
+         " + waste(technical services type49, trash containers type105) + water(type90/91/92/93/94/95/97/98, road type 11/16); virtual workers <=%d; renovation %s; rail construction %s; asphalt delivery %s; terraforming %s",
          g_workers,g_renovation?"enabled":"disabled",!g_railWanted?"disabled":g_railValid?"ready":"instructions differ",
-         g_asphaltValid?"ready":"instructions differ");
+         g_asphaltValid?"ready":"instructions differ",!g_terraformWanted?"disabled":g_terraformValid?"ready":"instructions differ");
     return 0;
 }
 extern "C" __declspec(dllexport) int TsmPluginStart() {
@@ -213,10 +261,12 @@ extern "C" __declspec(dllexport) int TsmPluginStart() {
     }
     InstallRailConstruction();
     InstallAsphaltDelivery();
+    InstallTerraforming();
     HANDLE reporter=CreateThread(nullptr,0,ReportActivity,nullptr,0,nullptr);
     if (reporter) CloseHandle(reporter);
-    Logf("industrial_construction INSTALLED v" CONSTRUCTION_VERSION " storages+small-farm+electricity+offices+pipes+roads+road buildings+fire stations+ships+rail buildings+cargo+conveyors+decorations+industries+airports+border+waste+water%s%s%s (stub %u/%u bytes); renovation, water treatment and asphalt delivery gameplay validation pending",
-         g_renovation?" + renovation":"",g_railInstalled?" + rail construction":"",g_asphaltInstalled?" + asphalt delivery":"",static_cast<unsigned>(stub.size),static_cast<unsigned>(ic::kCapacity));
+    Logf("industrial_construction INSTALLED v" CONSTRUCTION_VERSION " storages+small-farm+electricity+offices+pipes+roads+road buildings+fire stations+ships+rail buildings+cargo+conveyors+decorations+industries+airports+border+waste+water%s%s%s%s (stub %u/%u bytes); renovation, water treatment and terraforming gameplay validation pending",
+         g_renovation?" + renovation":"",g_railInstalled?" + rail construction":"",g_asphaltInstalled?" + asphalt delivery":"",g_terraformInstalled?" + terraforming":"",
+         static_cast<unsigned>(stub.size),static_cast<unsigned>(ic::kCapacity));
     return 0;
 }
 BOOL WINAPI DllMain(HINSTANCE,DWORD reason,LPVOID) {
