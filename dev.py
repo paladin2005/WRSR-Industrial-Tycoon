@@ -296,6 +296,23 @@ def construction_verify():
     for ins in md.disasm(image[0x1403F0:0x142425],0x1403F0):
         if ins.mnemonic.startswith('j') and ins.operands[0].type==capstone.x86.X86_OP_IMM:
             assert ins.operands[0].imm!=0x142346,'Branch enters refuel gate'
+    # Asphalt delivery (0.19): the office planner 0x14EB10 skips asphalt for an infrastructure site in an
+    # asphalt phase (kind 8) when no assigned office has a paver (0x1528E0) and none can bring real workers
+    # (0x1521F0); the patch replaces that final je at 0x14EC50. Both targets overwrite RAX and flags first.
+    assert image[0x14EB10:0x14EB19]==bytes.fromhex('48 8b c4 53 55 56 57 41 56'),'Office planner entry changed'
+    assert image[0x14EBE1:0x14EBEF]==bytes.fromhex('48 39 b3 d0 05 00 00 74 6c 45 84 ff 75 67'),'Planner infrastructure check changed'
+    assert image[0x14EBEF:0x14EC56]==bytes.fromhex(
+        '48 8b 85 98 c2 00 00 4c 3b 70 08 75 5a 48 8b d3 48 8b cd e8 d9 f1 ff ff 85 c0 78 4b 48 98 48 69 c8 b8 21 00 00'
+        ' 48 8b 83 10 06 00 00 83 7c 01 04 08 75 34 44 0f 2f 25 a2 bd 7b 00 0f 87 e0 04 00 00 48 8b d3 e8 a8 3c 00 00'
+        ' 84 c0 75 1a 4c 8b 85 c8 c2 00 00 48 8b d3 48 8b cd e8 a2 35 00 00 84 c0 0f 84 ba 04 00 00'),'Asphalt planner check changed'
+    assert image[0x1528F2:0x152900]==bytes.fromhex('48 8b 82 88 08 00 00 48 2b 82 80 08 00 00'),'Paver check office list changed'
+    assert image[0x14EC56:0x14EC60]==bytes.fromhex('41 0f 2f f3 0f 86 b0 04 00 00'),'Asphalt admit target changed'
+    assert image[0x14F110:0x14F14C]==bytes.fromhex(
+        '0f 28 b4 24 90 00 00 00 4c 8b bc 24 a0 00 00 00 44 0f 28 64 24 30 f3 0f 10 47 2c 44 0f 28 54 24 50 41 0f 2f c3'
+        ' 44 0f 28 5c 24 40 76 0c 8b 83 04 0e 00 00 89 47 38 48 89 1f 48 8b c7'),'Asphalt reject target changed'
+    for ins in md.disasm(image[0x14EB10:0x14F15A],0x14EB10):
+        if ins.mnemonic.startswith('j') and ins.operands[0].type==capstone.x86.X86_OP_IMM:
+            assert not 0x14EC50<ins.operands[0].imm<0x14EC56,'Branch enters asphalt planner patch'
     (BUILD/'construction_static_validation.json').write_text(json.dumps({
         'sha256':EXPECTED_SHA,'patch_rva':'0x15a39d','stolen':['movd xmm6, esi','cvtdq2ps xmm6, xmm6'],
         'scope':['storage type5 6203','storage type5 6202','small farm type9 6115',
@@ -311,7 +328,8 @@ def construction_verify():
                  'monuments type33','accessories type80 except pedestrian and metro names','fences road type 15',
                  'farms type9','fields type8',                 'mines type7, production lines type40, scrapyards type109, factories type6 any name (waste chain since 0.17)',
                  'airports type46/47/48, road type 13','customs type20, foreign pipeline type107',
-                 'technical services type49, trash containers type105','water and sewage type90/91/92/93/94/95/97/98, road types 11/16','renovation of admitted buildings in maintenance mode (XMM15 progress)'],'gameplay_validation':False},indent=2),encoding='utf-8')
+                 'technical services type49, trash containers type105','water and sewage type90/91/92/93/94/95/97/98, road types 11/16','renovation of admitted buildings in maintenance mode (XMM15 progress)',
+                 'asphalt delivery planning 0x14EC50 for admitted road types with virtual workers (no paver, no real workers)'],'gameplay_validation':False},indent=2),encoding='utf-8')
     print('PASS construction executable context, complete instructions and branch boundaries')
 
 
@@ -323,16 +341,19 @@ def construction_build():
     run(common+['-shared',ROOT/'src/industrial_construction.cpp','-o',BUILD/'industrial_construction.dll'])
     run(common+[ROOT/'tests/construction_test.cpp',ROOT/'tests/construction_call.S','-o',BUILD/'construction_test.exe'])
     run(common+[ROOT/'tests/rail_test.cpp',ROOT/'tests/rail_call.S','-o',BUILD/'rail_test.exe'])
-    run(common+[ROOT/'tests/plugin_host.cpp',ROOT/'tests/stub_call.S',ROOT/'tests/construction_call.S',ROOT/'tests/fire_call.S',ROOT/'tests/rail_call.S',ROOT/'tests/work_call.S',ROOT/'tests/repair_call.S','-o',BUILD/'construction_host.exe'])
+    run(common+[ROOT/'tests/asphalt_test.cpp',ROOT/'tests/asphalt_call.S','-o',BUILD/'asphalt_test.exe'])
+    run(common+[ROOT/'tests/plugin_host.cpp',ROOT/'tests/stub_call.S',ROOT/'tests/construction_call.S',ROOT/'tests/fire_call.S',ROOT/'tests/rail_call.S',ROOT/'tests/work_call.S',ROOT/'tests/repair_call.S',ROOT/'tests/asphalt_call.S','-o',BUILD/'construction_host.exe'])
 
 
 def construction_test():
     construction_verify()
     output=run([BUILD/'construction_test.exe'])
     output+=run([BUILD/'rail_test.exe'])
+    output+=run([BUILD/'asphalt_test.exe'])
     for mode in ('wrong-version','wrong-architecture','different-code','disabled','late-conflict','allocation-fails','invalid-workers',
                  'valid','valid-farm','valid-substation','valid-powerline','valid-office','valid-steam','valid-trafo','valid-road','valid-depot','valid-firestation','valid-ship',
-                 'valid-rail-office','valid-track','rail-different-code','rail-disabled','valid-cargo','valid-monument','valid-field','valid-quarry','coexist'):
+                 'valid-rail-office','valid-track','rail-different-code','rail-disabled','valid-cargo','valid-monument','valid-field','valid-quarry',
+                 'valid-asphalt','asphalt-different-code','coexist'):
         output+=run([BUILD/'construction_host.exe','construction-'+mode])
     # The same host still executes the industry targets, including power plants.
     for mode in ('valid','valid-wood','valid-car','valid-power','valid-ship','valid-train-factory','valid-food-factory','valid-gravel-quarry','valid-workshop-mine'):
@@ -350,8 +371,8 @@ def construction_test():
     print('PASS construction DLL x64, plugin API and runtime dependencies')
 
 
-CONSTRUCTION_VERSION='0.18.0-experimental'
-PREVIOUS_CONSTRUCTION=('0.17.0-experimental','0.16.0-experimental','0.15.0-experimental','0.14.0-experimental','0.13.0-experimental','0.12.0-experimental','0.11.0-experimental','0.10.0-experimental','0.9.0-experimental','0.8.0-experimental','0.7.0-experimental','0.6.0-experimental','0.5.0-experimental','0.4.0-experimental','0.3.0-experimental','0.2.0-experimental','0.1.0-experimental')
+CONSTRUCTION_VERSION='0.19.0-experimental'
+PREVIOUS_CONSTRUCTION=('0.18.0-experimental','0.17.0-experimental','0.16.0-experimental','0.15.0-experimental','0.14.0-experimental','0.13.0-experimental','0.12.0-experimental','0.11.0-experimental','0.10.0-experimental','0.9.0-experimental','0.8.0-experimental','0.7.0-experimental','0.6.0-experimental','0.5.0-experimental','0.4.0-experimental','0.3.0-experimental','0.2.0-experimental','0.1.0-experimental')
 
 
 def construction_package():

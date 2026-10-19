@@ -2,23 +2,26 @@
 #include "../vendor/TesmioLoader/src/tesmio_plugin.h"
 #include "construction_stub.h"
 #include "rail_stub.h"
+#include "asphalt_stub.h"
 
 // The single version string: plugin info and the startup log both use it.
-#define CONSTRUCTION_VERSION "0.18.0"
+#define CONSTRUCTION_VERSION "0.19.0"
 
 namespace ic=industrial::construction;
 alignas(8) static volatile LONG64 g_counts[ic::kCounterSlots]{};
 alignas(8) static volatile LONG64 g_diag[ic::kDiagTableSlots]{};
 alignas(8) static volatile LONG64 g_trackTicks=0;
+alignas(8) static volatile LONG64 g_asphaltPlans=0;
 static volatile LONG g_stopping=0;
 static int g_workers=50;
 static bool g_renovation=true;
 static bool g_railWanted=true, g_railValid=false, g_railInstalled=false;
 static int g_trackCrew=20;
+static bool g_asphaltValid=false, g_asphaltInstalled=false;
 
 static DWORD WINAPI ReportActivity(void*) {
     LONG64 reported[ic::kCounterSlots]{};
-    LONG64 reportedTrack=0;
+    LONG64 reportedTrack=0, reportedAsphalt=0;
     bool diagnosed[ic::kDiagTableSlots]{};
     while (!InterlockedCompareExchange(&g_stopping,0,0)) {
         Sleep(5000);
@@ -40,6 +43,11 @@ static DWORD WINAPI ReportActivity(void*) {
         if (track!=reportedTrack) {
             Logf("industrial_construction rail track: work ticks with a virtual crew=%lld",track);
             reportedTrack=track;
+        }
+        LONG64 asphalt=InterlockedCompareExchange64(&g_asphaltPlans,0,0);
+        if (asphalt!=reportedAsphalt) {
+            Logf("industrial_construction asphalt: deliveries planned for virtual workers=%lld",asphalt);
+            reportedAsphalt=asphalt;
         }
         // Each rejected (road type, sublevel) pair is reported once, to identify stalled sites.
         for (int i=0;i<ic::kDiagSlots;++i) {
@@ -108,6 +116,41 @@ static void InstallRailConstruction() {
     Logf("industrial_construction rail construction INSTALLED: rail office vehicles work and refuel without staff; virtual crew = vehicle capacity scaled by office staff (fallback %d)",g_trackCrew);
 }
 
+static bool AsphaltContextMatches() {
+    namespace a=industrial::asphalt;
+    return g_exeSize>a::kContextAt+sizeof(a::kContext) &&
+        !std::memcmp(g_exeBase+a::kContextAt,a::kContext,sizeof(a::kContext));
+}
+
+// Part of the construction patch: without it, offices never plan asphalt for road sites that
+// only virtual workers will lay. A failure here leaves the planner original.
+static void InstallAsphaltDelivery() {
+    namespace a=industrial::asphalt;
+    if (!g_asphaltValid || !AsphaltContextMatches()) {
+        Logf("industrial_construction asphalt delivery skipped: office planner instructions differ"); return;
+    }
+    BYTE* site=g_exeBase+a::kSite;
+    BYTE* cave=AllocNear(site,a::kCapacity);
+    if (!cave) { Logf("industrial_construction asphalt delivery skipped: no nearby code memory"); return; }
+    a::Stub stub;
+    BYTE patch[sizeof(a::kOriginal)]={0x90,0x90,0x90,0x90,0x90,0x90};
+    if (!a::BuildStub(stub,reinterpret_cast<std::uintptr_t>(cave),reinterpret_cast<std::uintptr_t>(g_exeBase+a::kAdmit),
+            reinterpret_cast<std::uintptr_t>(g_exeBase+a::kReject),reinterpret_cast<std::uintptr_t>(&g_asphaltPlans)) ||
+        !industrial::RelativeJump(patch,reinterpret_cast<std::uintptr_t>(site),reinterpret_cast<std::uintptr_t>(cave))) {
+        VirtualFree(cave,0,MEM_RELEASE);
+        Logf("industrial_construction asphalt delivery skipped: stub does not fit or jump is out of range"); return;
+    }
+    std::memcpy(cave,stub.bytes,stub.size);
+    FlushInstructionCache(GetCurrentProcess(),cave,stub.size);
+    if (!WriteCode(site,patch,sizeof(patch))) {
+        VirtualFree(cave,0,MEM_RELEASE);
+        Logf("industrial_construction asphalt delivery skipped: unable to write planner patch"); return;
+    }
+    g_asphaltInstalled=true;
+    Logf("industrial_construction asphalt delivery INSTALLED: offices plan asphalt for road sites with virtual workers when no asphalt paver or real workers are available (stub %u/%u bytes)",
+         static_cast<unsigned>(stub.size),static_cast<unsigned>(a::kCapacity));
+}
+
 extern "C" __declspec(dllexport) unsigned TsmPluginApiVersion() { return TSM_API_VERSION; }
 extern "C" __declspec(dllexport) int TsmPluginInit(const TsmHost* host,TsmPluginInfo* info) {
     TsmBind(host);
@@ -133,6 +176,7 @@ extern "C" __declspec(dllexport) int TsmPluginInit(const TsmHost* host,TsmPlugin
         Logf("industrial_construction refused: construction instructions differ"); return 1;
     }
     g_railValid=RailContextMatches();
+    g_asphaltValid=AsphaltContextMatches();
     Logf("industrial_construction validated WRSR 1.1.1.9; storages(type5, any name) + farms(type9)"
          " + electric buildings(type17/18/19/31/32/35/60) + power lines(road type 8/9) + pipes(road type 7, oil and steam)"
          " + construction/demolition offices(type12/106) + roads(road type 0/3/4) + road buildings(type0/14/34/38, repair stations 108) + fire stations(type26)"
@@ -141,8 +185,9 @@ extern "C" __declspec(dllexport) int TsmPluginInit(const TsmHost* host,TsmPlugin
          " + decorations(monuments type33, accessories type80 but pedestrian/metro, fences road type 15)"
          " + industries(fields type8, factories type6, mines type7, production lines type40, scrapyards type109, any name)"
          " + airports(type46/47/48, road type 13) + border(customs type20, foreign pipeline type107)"
-         " + waste(technical services type49, trash containers type105) + water(type90/91/92/93/94/95/97/98, road type 11/16); virtual workers <=%d; renovation %s; rail construction %s",
-         g_workers,g_renovation?"enabled":"disabled",!g_railWanted?"disabled":g_railValid?"ready":"instructions differ");
+         " + waste(technical services type49, trash containers type105) + water(type90/91/92/93/94/95/97/98, road type 11/16); virtual workers <=%d; renovation %s; rail construction %s; asphalt delivery %s",
+         g_workers,g_renovation?"enabled":"disabled",!g_railWanted?"disabled":g_railValid?"ready":"instructions differ",
+         g_asphaltValid?"ready":"instructions differ");
     return 0;
 }
 extern "C" __declspec(dllexport) int TsmPluginStart() {
@@ -167,10 +212,11 @@ extern "C" __declspec(dllexport) int TsmPluginStart() {
         Logf("industrial_construction refused: unable to write runtime patch"); return 1;
     }
     InstallRailConstruction();
+    InstallAsphaltDelivery();
     HANDLE reporter=CreateThread(nullptr,0,ReportActivity,nullptr,0,nullptr);
     if (reporter) CloseHandle(reporter);
-    Logf("industrial_construction INSTALLED v" CONSTRUCTION_VERSION " storages+small-farm+electricity+offices+pipes+roads+road buildings+fire stations+ships+rail buildings+cargo+conveyors+decorations+industries+airports+border+waste+water%s%s (stub %u/%u bytes); renovation and water treatment gameplay validation pending",
-         g_renovation?" + renovation":"",g_railInstalled?" + rail construction":"",static_cast<unsigned>(stub.size),static_cast<unsigned>(ic::kCapacity));
+    Logf("industrial_construction INSTALLED v" CONSTRUCTION_VERSION " storages+small-farm+electricity+offices+pipes+roads+road buildings+fire stations+ships+rail buildings+cargo+conveyors+decorations+industries+airports+border+waste+water%s%s%s (stub %u/%u bytes); renovation, water treatment and asphalt delivery gameplay validation pending",
+         g_renovation?" + renovation":"",g_railInstalled?" + rail construction":"",g_asphaltInstalled?" + asphalt delivery":"",static_cast<unsigned>(stub.size),static_cast<unsigned>(ic::kCapacity));
     return 0;
 }
 BOOL WINAPI DllMain(HINSTANCE,DWORD reason,LPVOID) {

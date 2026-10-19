@@ -14,6 +14,7 @@
 #include "../src/work_stub.h"
 #include "../src/repair_stub.h"
 #include "../src/plant_sources.h"
+#include "../src/asphalt_stub.h"
 
 extern "C" void RunLaborStub(void*,void*,void*,std::uint64_t*);
 extern "C" void RunConstructionStub(void*,void*,void*,std::uint64_t*);
@@ -22,6 +23,7 @@ extern "C" void RunTrackStub(void*,void*,void*,std::uint64_t*);
 extern "C" void RunWorkStub(void*,void*,void*,std::uint64_t*);
 extern "C" void RunWorkStub2(void*,void*,void*,std::uint64_t*);
 extern "C" void RunRepairStub(void*,void*,void*,std::uint64_t*);
+extern "C" void RunAsphaltStub(void*,void*,void*,std::uint64_t*);
 static BYTE* image;
 static constexpr size_t imageSize=0x280000; // reaches the fire dispatch site 0x25373E
 static bool enabled=true,allocationFails=false,invalidWorkers=false,fireDisabled=false,railDisabled=false,repairDisabled=false,plantsDisabled=false;
@@ -91,6 +93,9 @@ int main(int argc,char** argv) {
     std::memcpy(image+rs::kRefuelContextAt,rs::kRefuelContext,sizeof(rs::kRefuelContext));
     if (!std::strcmp(mode,"rail-different-code")) image[rs::kRefuelContextAt+1]^=1;
     railDisabled=!std::strcmp(mode,"rail-disabled");
+    namespace as=industrial::asphalt;
+    std::memcpy(image+as::kContextAt,as::kContext,sizeof(as::kContext));
+    if (!std::strcmp(mode,"asphalt-different-code")) image[as::kContextAt+20]^=1;
     namespace ws=industrial::work;
     // Work sites: modes "<prefix>-different-code" and "<prefix>-disabled", prefix container or field.
     const char* workPrefix[ws::kSiteCount]={"container","field","tower","well"};
@@ -204,6 +209,31 @@ int main(int argc,char** argv) {
                                   image[rs::kTrackSite]==0x48 && image[rs::kRefuelSite]==0x77;
         printf("%s rail construction %s (%s)\n",railOk?"PASS":"FAIL",railExpected?"installed":"left original",mode);
         if (!railOk) return 12;
+        bool asphaltExpected=std::strcmp(mode,"asphalt-different-code")!=0;
+        bool asphaltOk=asphaltExpected? image[as::kSite]==0xE9 && image[as::kSite+5]==0x90 :
+                                        !std::memcmp(image+as::kSite,as::kOriginal,sizeof(as::kOriginal));
+        printf("%s asphalt delivery %s (%s)\n",asphaltOk?"PASS":"FAIL",asphaltExpected?"installed":"left original",mode);
+        if (!asphaltOk) return 16;
+    }
+    if (construction && !std::strcmp(mode,"valid-asphalt")) {
+        // Run the installed planner hook from the game site; both continuations return here.
+        const BYTE admitRet[]={0x41,0xBB,0x01,0x00,0x00,0x00,0xC3}, rejectRet[]={0x41,0xBB,0x02,0x00,0x00,0x00,0xC3};
+        std::memcpy(image+as::kAdmit,admitRet,sizeof(admitRet));
+        std::memcpy(image+as::kReject,rejectRet,sizeof(rejectRet));
+        FlushInstructionCache(GetCurrentProcess(),image,imageSize);
+        auto runSite=[&](int roadType,int limit,int realWorkers) {
+            std::vector<BYTE> siteMem(0x1000),road(0x400),game(0x400);
+            void* r=road.data(); std::memcpy(siteMem.data()+0x5D0,&r,8);
+            std::memcpy(road.data()+0x12C,&roadType,4); std::memcpy(siteMem.data()+0x62C,&limit,4);
+            std::uint64_t o[16]{}; o[0]=static_cast<std::uint64_t>(realWorkers);
+            RunAsphaltStub(image+as::kSite,siteMem.data(),game.data(),o);
+            return o[10]==0?static_cast<int>(o[1]):-1;
+        };
+        int road=runSite(0,50,0), tram=runSite(2,50,0), noLimit=runSite(0,0,0), real=runSite(2,0,1);
+        bool ok=road==1 && tram==2 && noLimit==2 && real==1;
+        printf("%s actual construction DLL asphalt delivery hook (valid-asphalt); road=%d tram=%d limit0=%d real=%d\n",
+               ok?"PASS":"FAIL",road,tram,noLimit,real);
+        return ok?0:1;
     }
     if (construction && !std::strcmp(mode,"valid-track")) {
         // Run the installed track crew hook from the game site; the continuation returns here.
